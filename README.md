@@ -55,6 +55,40 @@ var validationErrors validator.ValidationErrors
 errors.As(err, &validationErrors)
  ```
 
+Structured errors for API clients
+------
+
+`ValidationErrors.Structured()` converts validation failures into a slice of
+`StructuredError` built from the path recorded during validation (never parsed
+back from error strings), so API clients can locate the exact request field:
+
+```go
+err := validate.Struct(mystruct)
+var ve validator.ValidationErrors
+if errors.As(err, &ve) {
+	structured := ve.Structured() // pass validator.WithValues() to also include field values
+	// structured[0].Namespace  eg. "Order.Items[1].Name"   (Go namespace)
+	// structured[0].FieldPath  eg. "Order.items[1].name"   (external names via RegisterTagNameFunc, Go name fallback)
+	// structured[0].Pointer    eg. "/items/1/name"         (RFC 6901 JSON Pointer)
+	// structured[0].Tag / ActualTag / Param                (failed constraint, aliases and 'or' preserved)
+	// structured[0].Path                                  (typed segments incl. map key types)
+}
+```
+
+Notes:
+
+- String map keys are JSON Pointer escaped (`~` -> `~0`, `/` -> `~1`).
+- Non-string map keys are recorded as typed path segments (`SegmentTypedMapKey`); no JSON Pointer is fabricated for them.
+- StructLevel custom paths that cannot be proven to map to a real field are flagged `Unresolved` and keep their original namespace.
+- Field values are omitted by default so sensitive data (eg. passwords) is not returned to clients; opt in with `ve.Structured(validator.WithValues())`.
+- The original `ValidationErrors`/`FieldError` interface is unchanged.
+
+Run the example (prints structured JSON including an unresolved case):
+
+```sh
+go run ./_examples/structured-errors
+```
+
 Usage and documentation
 ------
 
@@ -66,6 +100,7 @@ Please see https://pkg.go.dev/github.com/go-playground/validator/v10 for detaile
 - [Custom Field Types](https://github.com/go-playground/validator/blob/master/_examples/custom/main.go)
 - [Struct Level](https://github.com/go-playground/validator/blob/master/_examples/struct-level/main.go)
 - [Translations & Custom Errors](https://github.com/go-playground/validator/blob/master/_examples/translations/main.go)
+- [Structured Errors](https://github.com/go-playground/validator/blob/master/_examples/structured-errors/main.go)
 - [Gin upgrade and/or override validator](https://github.com/go-playground/validator/tree/v9/_examples/gin-upgrading-overriding)
 - [wash - an example application putting it all together](https://github.com/bluesuncorp/wash)
 

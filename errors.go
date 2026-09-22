@@ -168,6 +168,7 @@ type fieldError struct {
 	actualTag      string
 	ns             string
 	structNs       string
+	path           []pathSegment
 	fieldLen       uint8
 	structfieldLen uint8
 	value          interface{}

@@ -14,6 +14,7 @@ type validate struct {
 	top            reflect.Value
 	ns             []byte
 	actualNs       []byte
+	segs           []pathSegment // recorded path segments for StructLevel reporting
 	errs           ValidationErrors
 	includeExclude map[string]struct{} // reset only if StructPartial or StructExcept are called, no need otherwise
 	ffn            FilterFunc
@@ -31,7 +32,7 @@ type validate struct {
 }
 
 // parent and current will be the same the first run of validateStruct
-func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, current reflect.Value, typ reflect.Type, ns []byte, structNs []byte, ct *cTag) {
+func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, current reflect.Value, typ reflect.Type, ns []byte, structNs []byte, segs []pathSegment, ct *cTag) {
 	cs, ok := v.v.structCache.Get(typ)
 	if !ok {
 		cs = v.v.extractStructCache(current, typ.Name())
@@ -43,12 +44,17 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 
 		structNs = append(structNs, cs.name...)
 		structNs = append(structNs, '.')
+
+		segs = append(segs, pathSegment{kind: segRoot, name: cs.name})
 	}
 
 	// ct is nil on top level struct, and structs as fields that have no tag info
 	// so if nil or if not nil and the structonly tag isn't present
 	if ct == nil || ct.typeof != typeStructOnly {
 		var f *cField
+
+		base := len(segs)
+		segs = append(segs, pathSegment{})
 
 		for i := 0; i < len(cs.fields); i++ {
 			f = cs.fields[i]
@@ -69,8 +75,11 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 				}
 			}
 
-			v.traverseField(ctx, current, current.Field(f.idx), ns, structNs, f, f.cTags)
+			segs[base] = pathSegment{kind: segField, name: f.name, altName: f.altName}
+			v.traverseField(ctx, current, current.Field(f.idx), ns, structNs, segs, f, f.cTags)
 		}
+
+		segs = segs[:base]
 	}
 
 	// check if any struct level validations, after all field validations already checked.
@@ -81,13 +90,14 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 		v.slCurrent = current
 		v.ns = ns
 		v.actualNs = structNs
+		v.segs = segs
 
 		cs.fn(ctx, v)
 	}
 }
 
 // traverseField validates any field, be it a struct or single field, ensures it's validity and passes it along to be validated via it's tag options
-func (v *validate) traverseField(ctx context.Context, parent reflect.Value, current reflect.Value, ns []byte, structNs []byte, cf *cField, ct *cTag) {
+func (v *validate) traverseField(ctx context.Context, parent reflect.Value, current reflect.Value, ns []byte, structNs []byte, segs []pathSegment, cf *cField, ct *cTag) {
 	var typ reflect.Type
 	var kind reflect.Kind
 
@@ -129,6 +139,7 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 						actualTag:      ct.tag,
 						ns:             v.str1,
 						structNs:       v.str2,
+						path:           copySegments(segs),
 						fieldLen:       uint8(len(cf.altName)),
 						structfieldLen: uint8(len(cf.name)),
 						param:          ct.param,
@@ -152,6 +163,7 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 						actualTag:      ct.tag,
 						ns:             v.str1,
 						structNs:       v.str2,
+						path:           copySegments(segs),
 						fieldLen:       uint8(len(cf.altName)),
 						structfieldLen: uint8(len(cf.name)),
 						value:          getValue(current),
@@ -198,7 +210,7 @@ OUTER:
 					structNs = append(append(structNs, cf.name...), '.')
 				}
 
-				v.validateStruct(ctx, parent, current, typ, ns, structNs, ct)
+				v.validateStruct(ctx, parent, current, typ, ns, structNs, segs, ct)
 			}
 			return
 		}
@@ -220,7 +232,7 @@ OUTER:
 					structNs = append(append(structNs, cf.name...), '.')
 				}
 
-				v.validateStruct(ctx, parent, current, typ, ns, structNs, ct)
+				v.validateStruct(ctx, parent, current, typ, ns, structNs, segs, ct)
 			}
 			return
 
@@ -286,9 +298,11 @@ OUTER:
 
 				var i64 int64
 				reusableCF := &cField{}
+				idxSegs := append(segs, pathSegment{kind: segIndex})
 
 				for i := 0; i < current.Len(); i++ {
 					i64 = int64(i)
+					idxSegs[len(idxSegs)-1].index = i
 
 					v.misc = append(v.misc[0:0], cf.name...)
 					v.misc = append(v.misc, '[')
@@ -307,16 +321,23 @@ OUTER:
 
 						reusableCF.altName = string(v.misc)
 					}
-					v.traverseField(ctx, parent, current.Index(i), ns, structNs, reusableCF, ct)
+					v.traverseField(ctx, parent, current.Index(i), ns, structNs, idxSegs, reusableCF, ct)
 				}
 
 			case reflect.Map:
 
 				var pv string
 				reusableCF := &cField{}
+				keySegs := append(segs, pathSegment{})
 
 				for _, key := range current.MapKeys() {
 					pv = fmt.Sprintf("%v", key)
+
+					if key.Kind() == reflect.String {
+						keySegs[len(keySegs)-1] = pathSegment{kind: segKeyString, name: key.String()}
+					} else {
+						keySegs[len(keySegs)-1] = pathSegment{kind: segKeyTyped, name: pv, keyType: key.Type().String()}
+					}
 
 					v.misc = append(v.misc[0:0], cf.name...)
 					v.misc = append(v.misc, '[')
@@ -337,10 +358,10 @@ OUTER:
 					}
 
 					if ct != nil && ct.typeof == typeKeys && ct.keys != nil {
-						v.traverseField(ctx, parent, key, ns, structNs, reusableCF, ct.keys)
+						v.traverseField(ctx, parent, key, ns, structNs, keySegs, reusableCF, ct.keys)
 						// can be nil when just keys being validated
 						if ct.next != nil {
-							v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, reusableCF, ct.next)
+							v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, keySegs, reusableCF, ct.next)
 						} else {
 							// Struct fallback when map values are structs
 							val := current.MapIndex(key)
@@ -348,14 +369,14 @@ OUTER:
 							case reflect.Ptr:
 								if val.Elem().Kind() == reflect.Struct {
 									// Dive into the struct so its own tags run
-									v.traverseField(ctx, parent, val, ns, structNs, reusableCF, nil)
+									v.traverseField(ctx, parent, val, ns, structNs, keySegs, reusableCF, nil)
 								}
 							case reflect.Struct:
-								v.traverseField(ctx, parent, val, ns, structNs, reusableCF, nil)
+								v.traverseField(ctx, parent, val, ns, structNs, keySegs, reusableCF, nil)
 							}
 						}
 					} else {
-						v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, reusableCF, ct)
+						v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, keySegs, reusableCF, ct)
 					}
 				}
 
@@ -429,6 +450,7 @@ OUTER:
 								actualTag:      ct.actualAliasTag,
 								ns:             v.str1,
 								structNs:       v.str2,
+								path:           copySegments(segs),
 								fieldLen:       uint8(len(cf.altName)),
 								structfieldLen: uint8(len(cf.name)),
 								value:          getValue(current),
@@ -447,6 +469,7 @@ OUTER:
 								actualTag:      tVal,
 								ns:             v.str1,
 								structNs:       v.str2,
+								path:           copySegments(segs),
 								fieldLen:       uint8(len(cf.altName)),
 								structfieldLen: uint8(len(cf.name)),
 								value:          getValue(current),
@@ -487,6 +510,7 @@ OUTER:
 						actualTag:      ct.tag,
 						ns:             v.str1,
 						structNs:       v.str2,
+						path:           copySegments(segs),
 						fieldLen:       uint8(len(cf.altName)),
 						structfieldLen: uint8(len(cf.name)),
 						value:          getValue(current),

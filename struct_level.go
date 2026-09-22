@@ -113,6 +113,22 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 		structFieldName = fieldName
 	}
 
+	// attempt to resolve the reported name to a real field of the current struct
+	// so a precise path can be recorded; custom/unverifiable paths are kept as-is
+	// and marked unresolved.
+	seg := pathSegment{kind: segUnresolved, name: structFieldName, altName: fieldName}
+	if isSimplePathName(structFieldName) && v.slCurrent.IsValid() && v.slCurrent.Kind() == reflect.Struct {
+		if cs, ok := v.v.structCache.Get(v.slCurrent.Type()); ok {
+			for _, f := range cs.fields {
+				if f.name == structFieldName {
+					seg = pathSegment{kind: segField, name: f.name, altName: f.altName}
+					break
+				}
+			}
+		}
+	}
+	segs := append(copySegments(v.segs), seg)
+
 	v.str1 = string(append(v.ns, fieldName...))
 
 	if v.v.hasTagNameFunc || fieldName != structFieldName {
@@ -129,6 +145,7 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 				actualTag:      tag,
 				ns:             v.str1,
 				structNs:       v.str2,
+				path:           segs,
 				fieldLen:       uint8(len(fieldName)),
 				structfieldLen: uint8(len(structFieldName)),
 				param:          param,
@@ -145,6 +162,7 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 			actualTag:      tag,
 			ns:             v.str1,
 			structNs:       v.str2,
+			path:           segs,
 			fieldLen:       uint8(len(fieldName)),
 			structfieldLen: uint8(len(structFieldName)),
 			value:          getValue(fv),
@@ -165,6 +183,14 @@ func (v *validate) ReportValidationErrors(relativeNamespace, relativeStructNames
 		err = errs[i].(*fieldError)
 		err.ns = string(append(append(v.ns, relativeNamespace...), err.ns...))
 		err.structNs = string(append(append(v.actualNs, relativeStructNamespace...), err.structNs...))
+
+		path := copySegments(v.segs)
+		if len(relativeNamespace) > 0 || len(relativeStructNamespace) > 0 {
+			// the relative namespaces are opaque strings that cannot be mapped back
+			// to concrete fields, so the recorded path is marked unresolved.
+			path = append(path, pathSegment{kind: segUnresolved, name: relativeStructNamespace, altName: relativeNamespace})
+		}
+		err.path = append(path, err.path...)
 
 		v.errs = append(v.errs, err)
 	}
