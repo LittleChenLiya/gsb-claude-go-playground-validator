@@ -113,6 +113,14 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 		structFieldName = fieldName
 	}
 
+	// try to prove the reported path against the current struct's fields;
+	// custom paths that cannot be proven are marked unresolved.
+	path := v.errPath()
+	seg, resolved := v.resolveStructFieldSegment(structFieldName)
+	if resolved {
+		path = append(path, seg)
+	}
+
 	v.str1 = string(append(v.ns, fieldName...))
 
 	if v.v.hasTagNameFunc || fieldName != structFieldName {
@@ -133,6 +141,8 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 				structfieldLen: uint8(len(structFieldName)),
 				param:          param,
 				kind:           kind,
+				path:           path,
+				unresolved:     !resolved,
 			},
 		)
 		return
@@ -151,8 +161,34 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 			param:          param,
 			kind:           kind,
 			typ:            fv.Type(),
+			path:           path,
+			unresolved:     !resolved,
 		},
 	)
+}
+
+// resolveStructFieldSegment proves a StructLevel reported field name against
+// the fields of the struct currently being validated, returning the matching
+// path segment. It only resolves plain field names; composite custom paths
+// such as "Names[0]" cannot be proven and report resolved as false.
+func (v *validate) resolveStructFieldSegment(structFieldName string) (pathSegment, bool) {
+	if !v.slCurrent.IsValid() {
+		return pathSegment{}, false
+	}
+	typ := v.slCurrent.Type()
+	if typ.Kind() != reflect.Struct {
+		return pathSegment{}, false
+	}
+	cs, ok := v.v.structCache.Get(typ)
+	if !ok {
+		return pathSegment{}, false
+	}
+	for _, f := range cs.fields {
+		if f.name == structFieldName {
+			return pathSegment{structName: f.name, name: f.altName}, true
+		}
+	}
+	return pathSegment{}, false
 }
 
 // ReportValidationErrors reports ValidationErrors obtained from running validations within the Struct Level validation.
@@ -165,6 +201,9 @@ func (v *validate) ReportValidationErrors(relativeNamespace, relativeStructNames
 		err = errs[i].(*fieldError)
 		err.ns = string(append(append(v.ns, relativeNamespace...), err.ns...))
 		err.structNs = string(append(append(v.actualNs, relativeStructNamespace...), err.structNs...))
+		// the recorded path is relative to the inner validation and cannot be
+		// joined with the current one, so it cannot be proven here.
+		err.unresolved = true
 
 		v.errs = append(v.errs, err)
 	}

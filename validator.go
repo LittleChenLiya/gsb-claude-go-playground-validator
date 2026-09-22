@@ -28,6 +28,7 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	path           []pathSegment // traversal path recorded for structured errors
 }
 
 // parent and current will be the same the first run of validateStruct
@@ -69,7 +70,9 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 				}
 			}
 
+			v.path = append(v.path, pathSegment{structName: f.name, name: f.altName})
 			v.traverseField(ctx, current, current.Field(f.idx), ns, structNs, f, f.cTags)
+			v.path = v.path[:len(v.path)-1]
 		}
 	}
 
@@ -133,9 +136,10 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 						structfieldLen: uint8(len(cf.name)),
 						param:          ct.param,
 						kind:           kind,
+						path:           v.errPath(),
 					},
-				)
-				return
+					)
+					return
 			}
 
 			v.str1 = appendAltName(ns, cf.altName)
@@ -158,6 +162,7 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 						param:          ct.param,
 						kind:           kind,
 						typ:            current.Type(),
+						path:           v.errPath(),
 					},
 				)
 				return
@@ -307,7 +312,9 @@ OUTER:
 
 						reusableCF.altName = string(v.misc)
 					}
+					v.path = append(v.path, pathSegment{index: i64, isIndex: true})
 					v.traverseField(ctx, parent, current.Index(i), ns, structNs, reusableCF, ct)
+					v.path = v.path[:len(v.path)-1]
 				}
 
 			case reflect.Map:
@@ -336,6 +343,7 @@ OUTER:
 						reusableCF.altName = string(v.misc)
 					}
 
+					v.path = append(v.path, pathSegment{key: pv, keyKind: key.Kind(), isKey: true})
 					if ct != nil && ct.typeof == typeKeys && ct.keys != nil {
 						v.traverseField(ctx, parent, key, ns, structNs, reusableCF, ct.keys)
 						// can be nil when just keys being validated
@@ -357,6 +365,7 @@ OUTER:
 					} else {
 						v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, reusableCF, ct)
 					}
+					v.path = v.path[:len(v.path)-1]
 				}
 
 			default:
@@ -435,6 +444,7 @@ OUTER:
 								param:          ct.param,
 								kind:           kind,
 								typ:            typ,
+								path:           v.errPath(),
 							},
 						)
 					} else {
@@ -453,6 +463,7 @@ OUTER:
 								param:          ct.param,
 								kind:           kind,
 								typ:            typ,
+								path:           v.errPath(),
 							},
 						)
 					}
@@ -493,6 +504,7 @@ OUTER:
 						param:          ct.param,
 						kind:           kind,
 						typ:            typ,
+						path:           v.errPath(),
 					},
 				)
 
@@ -511,6 +523,18 @@ func appendAltName(ns []byte, altName string) string {
 		return string(ns[:n-1])
 	}
 	return string(ns)
+}
+
+// errPath returns a copy of the traversal path recorded up to this point,
+// for attaching to a fieldError. Returns nil when no path was recorded
+// (eg. validating a single variable with Var).
+func (v *validate) errPath() []pathSegment {
+	if len(v.path) == 0 {
+		return nil
+	}
+	p := make([]pathSegment, len(v.path))
+	copy(p, v.path)
+	return p
 }
 
 func getValue(val reflect.Value) interface{} {

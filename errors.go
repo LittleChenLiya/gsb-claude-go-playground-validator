@@ -174,6 +174,8 @@ type fieldError struct {
 	param          string
 	kind           reflect.Kind
 	typ            reflect.Type
+	path           []pathSegment
+	unresolved     bool
 }
 
 // Tag returns the validation tag that failed.

@@ -66,11 +66,40 @@ Please see https://pkg.go.dev/github.com/go-playground/validator/v10 for detaile
 - [Custom Field Types](https://github.com/go-playground/validator/blob/master/_examples/custom/main.go)
 - [Struct Level](https://github.com/go-playground/validator/blob/master/_examples/struct-level/main.go)
 - [Translations & Custom Errors](https://github.com/go-playground/validator/blob/master/_examples/translations/main.go)
+- [Structured Errors](https://github.com/go-playground/validator/blob/master/_examples/structured-errors/main.go)
 - [Gin upgrade and/or override validator](https://github.com/go-playground/validator/tree/v9/_examples/gin-upgrading-overriding)
 - [wash - an example application putting it all together](https://github.com/bluesuncorp/wash)
 
 Baked-in Validations
 ------
+
+Structured Errors
+------
+
+`ValidationErrors.Structured()` converts validation failures into a machine-readable
+form so API clients can locate the offending request field. Paths are recorded during
+validation itself, never reverse-engineered from error strings:
+
+```go
+errs := err.(validator.ValidationErrors)
+structured := errs.Structured() // add validator.WithValues() to include field values
+```
+
+Each `StructuredError` carries the Go `Namespace`, the external `FieldPath` (using
+`RegisterTagNameFunc` names, falling back to Go field names), an RFC 6901 JSON
+`Pointer`, the failed `Tag`/`ActualTag` (aliases and `or` combinations preserved) and
+`Param`. Nested structs, pointers, slice indices, map keys and `dive`/`keys`/`endkeys`
+are supported. String map keys are JSON Pointer escaped (`~` -> `~0`, `/` -> `~1`);
+non-string keys render as typed path segments (eg. `counts[int(5)]`) with `Pointer`
+left empty rather than fabricated. Struct-level custom paths that cannot be proven
+against the struct are marked `Unresolved` and keep their original namespace. Field
+values are excluded by default so secrets are not leaked into API responses.
+
+Run the example (prints structured JSON, including an unresolved struct-level error):
+
+```sh
+go run ./_examples/structured-errors
+```
 
 ### Special Notes:
 - If new to using validator it is highly recommended to initialize it using the `WithRequiredStructEnabled` option which is opt-in to new behaviour that will become the default behaviour in v11+. See documentation for more details.
