@@ -58,6 +58,39 @@ Custom types can implement the Valuer interface to return the value that should
 be validated. This is useful when a type wraps another value and you want
 validation to run against the unwrapped value.
 
+# Budgeted Validation
+
+StructWithBudget validates a struct like StructCtx but caps the amount of
+work performed, which is useful for very large or deeply nested objects:
+
+	errs, res, err := validate.StructWithBudget(ctx, s, validator.Budget{
+		MaxNodes:  1000, // max struct field / dive element visits; root not counted
+		MaxErrors: 10,   // max collected errors before stopping
+	})
+
+It returns the ValidationErrors collected so far plus an independent
+StopResult, so ordinary validation failures (StopNone with non-empty errors),
+an exhausted budget (StopMaxNodes / StopMaxErrors), context cancellation
+(StopContextCanceled) and detected pointer cycles (StopCycle) can be told
+apart. A zero budget forbids that kind of work entirely; negative budgets
+are rejected.
+
+When StopResult.Truncated is true the traversal stopped early and the
+returned errors are only a prefix of the failures - do not treat them as a
+completed full validation or as the total error count.
+
+For deterministic budget placement, map[string] containers are traversed in
+sorted key order while slices and structs keep their natural order; maps
+with non-string keys are rejected. Aliases, dive and custom tags behave the
+same as in Struct. Example terminal session:
+
+	$ go test -run ExampleValidate_StructWithBudget -v
+	path=Cart.Lines[0].SKU tag=required
+	path=Cart.Lines[1].SKU tag=required
+	visited: 5
+	stop: MaxErrors
+	result: truncated, more errors may exist
+
 	type Nullable[T any] struct {
 		Data T
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"unsafe"
 )
@@ -28,6 +29,7 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	budget         *budgetState // non-nil only during StructWithBudget
 }
 
 // parent and current will be the same the first run of validateStruct
@@ -69,6 +71,10 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 				}
 			}
 
+			if v.budget != nil && !v.budgetEnter() {
+				return
+			}
+
 			v.traverseField(ctx, current, current.Field(f.idx), ns, structNs, f, f.cTags)
 		}
 	}
@@ -77,6 +83,10 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 	// first iteration will have no info about nostructlevel tag, and is checked prior to
 	// calling the next iteration of validateStruct called from traverseField.
 	if cs.fn != nil {
+		if v.budgetStopped() {
+			return
+		}
+
 		v.slflParent = parent
 		v.slCurrent = current
 		v.ns = ns
@@ -90,6 +100,16 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 func (v *validate) traverseField(ctx context.Context, parent reflect.Value, current reflect.Value, ns []byte, structNs []byte, cf *cField, ct *cTag) {
 	var typ reflect.Type
 	var kind reflect.Kind
+
+	if v.budget != nil {
+		pop, cycle := v.budgetTrackPointer(current, ns, cf)
+		if cycle {
+			return
+		}
+		if pop != nil {
+			defer pop()
+		}
+	}
 
 	current, kind, v.fldIsPointer = v.extractTypeInternal(current, false)
 
@@ -282,13 +302,17 @@ OUTER:
 			// traverse slice or map here
 			// or panic ;)
 			switch kind {
-			case reflect.Slice, reflect.Array:
+		case reflect.Slice, reflect.Array:
 
-				var i64 int64
-				reusableCF := &cField{}
+			var i64 int64
+			reusableCF := &cField{}
 
-				for i := 0; i < current.Len(); i++ {
-					i64 = int64(i)
+			for i := 0; i < current.Len(); i++ {
+				if v.budget != nil && !v.budgetEnter() {
+					return
+				}
+
+				i64 = int64(i)
 
 					v.misc = append(v.misc[0:0], cf.name...)
 					v.misc = append(v.misc, '[')
@@ -310,13 +334,29 @@ OUTER:
 					v.traverseField(ctx, parent, current.Index(i), ns, structNs, reusableCF, ct)
 				}
 
-			case reflect.Map:
+		case reflect.Map:
 
-				var pv string
-				reusableCF := &cField{}
+			var pv string
+			reusableCF := &cField{}
 
-				for _, key := range current.MapKeys() {
-					pv = fmt.Sprintf("%v", key)
+			keys := current.MapKeys()
+
+			if v.budget != nil {
+				if current.Type().Key().Kind() != reflect.String {
+					v.budget.stop = StopError
+					v.budget.truncated = true
+					v.budget.err = fmt.Errorf("validator: StructWithBudget only supports map[string] containers, got map key type '%s'", current.Type().Key())
+					return
+				}
+				sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+			}
+
+			for _, key := range keys {
+				if v.budget != nil && !v.budgetEnter() {
+					return
+				}
+
+				pv = fmt.Sprintf("%v", key)
 
 					v.misc = append(v.misc[0:0], cf.name...)
 					v.misc = append(v.misc, '[')
@@ -336,9 +376,12 @@ OUTER:
 						reusableCF.altName = string(v.misc)
 					}
 
-					if ct != nil && ct.typeof == typeKeys && ct.keys != nil {
-						v.traverseField(ctx, parent, key, ns, structNs, reusableCF, ct.keys)
-						// can be nil when just keys being validated
+				if ct != nil && ct.typeof == typeKeys && ct.keys != nil {
+					v.traverseField(ctx, parent, key, ns, structNs, reusableCF, ct.keys)
+					if v.budgetStopped() {
+						return
+					}
+					// can be nil when just keys being validated
 						if ct.next != nil {
 							v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, reusableCF, ct.next)
 						} else {
