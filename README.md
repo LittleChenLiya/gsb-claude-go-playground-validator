@@ -55,6 +55,46 @@ var validationErrors validator.ValidationErrors
 errors.As(err, &validationErrors)
  ```
 
+Budgeted Validation
+-------
+
+`StructWithBudget` validates a struct like `StructCtx` but caps the amount of
+work performed and reports exactly why traversal stopped, which is useful for
+untrusted or deeply nested input:
+
+```go
+maxNodes, maxErrors := 1000, 10
+res, err := validate.StructWithBudget(ctx, s, validator.StructBudget{
+	MaxNodes:  &maxNodes,  // nil = unlimited, 0 = no node visits allowed
+	MaxErrors: &maxErrors, // nil = unlimited, 0 = no errors may be collected
+})
+// res.Errors       collected ValidationErrors
+// res.NodesVisited struct field / dive element visits charged
+// res.StopReason   none | max-errors | max-nodes | context-canceled | cycle | invalid-input
+// res.Truncated    true when the error budget cut collection short
+```
+
+- Every entry into a struct field or dive container element counts as one
+  node visit; the root struct is free and the same object reached through
+  different paths is charged once per path. Past the boundary neither the
+  next custom validator nor any struct-level callback runs.
+- When `MaxErrors` is reached traversal stops immediately and the result is
+  marked `Truncated`: `res.Errors` is only a prefix of the failures, never
+  report it as the total error count. The same applies to any
+  `StopReason != BudgetStopNone` result - it is PARTIAL, not a completed
+  validation.
+- A canceled context lets the running callback finish, but no further node
+  is entered (`BudgetStopContextCanceled`).
+- `map[string]` dive elements are visited in sorted key order so the same
+  budget always lands on the same fields; maps with non-string keys are
+  rejected with `ErrNonStringMapKey`. Slice and struct order is unchanged.
+- Encountering the same pointer twice on the active path stops with
+  `BudgetStopCycle`; shared sub-objects on different branches are not cycles.
+- `Struct` and `StructCtx` are unaffected and behave exactly as before.
+
+See the runnable 90-second tour printing error paths, visit counts and stop
+reasons: [_examples/budget](https://github.com/go-playground/validator/blob/master/_examples/budget/main.go)
+
 Usage and documentation
 ------
 
@@ -63,6 +103,7 @@ Please see https://pkg.go.dev/github.com/go-playground/validator/v10 for detaile
 ##### Examples:
 
 - [Simple](https://github.com/go-playground/validator/blob/master/_examples/simple/main.go)
+- [Budgeted Validation](https://github.com/go-playground/validator/blob/master/_examples/budget/main.go)
 - [Custom Field Types](https://github.com/go-playground/validator/blob/master/_examples/custom/main.go)
 - [Struct Level](https://github.com/go-playground/validator/blob/master/_examples/struct-level/main.go)
 - [Translations & Custom Errors](https://github.com/go-playground/validator/blob/master/_examples/translations/main.go)

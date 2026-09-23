@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"unsafe"
 )
@@ -28,6 +29,7 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	budget         *budgetState // StructWithBudget only, nil otherwise
 }
 
 // parent and current will be the same the first run of validateStruct
@@ -69,6 +71,10 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 				}
 			}
 
+			if v.budget != nil && !v.enterNode(ctx) {
+				return
+			}
+
 			v.traverseField(ctx, current, current.Field(f.idx), ns, structNs, f, f.cTags)
 		}
 	}
@@ -77,6 +83,10 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 	// first iteration will have no info about nostructlevel tag, and is checked prior to
 	// calling the next iteration of validateStruct called from traverseField.
 	if cs.fn != nil {
+		if v.budget != nil && v.budgetHalt(ctx) {
+			return
+		}
+
 		v.slflParent = parent
 		v.slCurrent = current
 		v.ns = ns
@@ -90,6 +100,19 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 func (v *validate) traverseField(ctx context.Context, parent reflect.Value, current reflect.Value, ns []byte, structNs []byte, cf *cField, ct *cTag) {
 	var typ reflect.Type
 	var kind reflect.Kind
+
+	if v.budget != nil {
+		if v.budgetHalt(ctx) {
+			return
+		}
+		untrack, ok := v.budgetTrackPtrs(current)
+		if !ok {
+			return
+		}
+		if untrack != nil {
+			defer untrack()
+		}
+	}
 
 	current, kind, v.fldIsPointer = v.extractTypeInternal(current, false)
 
@@ -122,7 +145,7 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 				} else {
 					v.str2 = v.str1
 				}
-				v.errs = append(v.errs,
+				v.appendError(
 					&fieldError{
 						v:              v.v,
 						tag:            ct.aliasTag,
@@ -145,7 +168,7 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 				v.str2 = v.str1
 			}
 			if !ct.runValidationWhenNil {
-				v.errs = append(v.errs,
+				v.appendError(
 					&fieldError{
 						v:              v.v,
 						tag:            ct.aliasTag,
@@ -184,6 +207,10 @@ func (v *validate) traverseField(ctx context.Context, parent reflect.Value, curr
 
 OUTER:
 	for {
+		if v.budget != nil && v.budgetHalt(ctx) {
+			return
+		}
+
 		if ct == nil || !ct.hasTag || (isNestedStruct && len(cf.name) == 0) {
 			// isNestedStruct check here
 			if isNestedStruct {
@@ -288,6 +315,10 @@ OUTER:
 				reusableCF := &cField{}
 
 				for i := 0; i < current.Len(); i++ {
+					if v.budget != nil && !v.enterNode(ctx) {
+						return
+					}
+
 					i64 = int64(i)
 
 					v.misc = append(v.misc[0:0], cf.name...)
@@ -314,8 +345,26 @@ OUTER:
 
 				var pv string
 				reusableCF := &cField{}
+				mapKeys := current.MapKeys()
 
-				for _, key := range current.MapKeys() {
+				if v.budget != nil {
+					if current.Type().Key().Kind() != reflect.String {
+						v.budget.stopReason = BudgetStopInvalidInput
+						v.budget.fatalErr = ErrNonStringMapKey
+						return
+					}
+					// deterministic order so the same budget always
+					// lands on the same fields
+					sort.Slice(mapKeys, func(i, j int) bool {
+						return mapKeys[i].String() < mapKeys[j].String()
+					})
+				}
+
+				for _, key := range mapKeys {
+					if v.budget != nil && !v.enterNode(ctx) {
+						return
+					}
+
 					pv = fmt.Sprintf("%v", key)
 
 					v.misc = append(v.misc[0:0], cf.name...)
@@ -422,7 +471,7 @@ OUTER:
 					}
 
 					if ct.hasAlias {
-						v.errs = append(v.errs,
+						v.appendError(
 							&fieldError{
 								v:              v.v,
 								tag:            ct.aliasTag,
@@ -440,7 +489,7 @@ OUTER:
 					} else {
 						tVal := string(v.misc)[1:]
 
-						v.errs = append(v.errs,
+						v.appendError(
 							&fieldError{
 								v:              v.v,
 								tag:            tVal,
@@ -480,7 +529,7 @@ OUTER:
 					v.str2 = v.str1
 				}
 
-				v.errs = append(v.errs,
+				v.appendError(
 					&fieldError{
 						v:              v.v,
 						tag:            ct.aliasTag,
