@@ -84,6 +84,21 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 
 		cs.fn(ctx, v)
 	}
+
+	// run any registered composite unique rules for this struct type,
+	// after all field and struct level validations
+	if len(v.v.compositeUniqueRules) > 0 {
+		if rules, ok := v.v.compositeUniqueRules[typ]; ok {
+			v.slflParent = parent
+			v.slCurrent = current
+			v.ns = ns
+			v.actualNs = structNs
+
+			for _, rule := range rules {
+				rule.validate(v, current)
+			}
+		}
+	}
 }
 
 // traverseField validates any field, be it a struct or single field, ensures it's validity and passes it along to be validated via it's tag options

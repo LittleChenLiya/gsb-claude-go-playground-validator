@@ -92,6 +92,7 @@ type Validate struct {
 	rules                  map[reflect.Type]map[string]string
 	tagCache               *tagCache
 	structCache            *structCache
+	compositeUniqueRules   map[reflect.Type][]*compositeUniqueRule
 	hasCustomFuncs         bool
 	hasTagNameFunc         bool
 	requiredStructEnabled  bool

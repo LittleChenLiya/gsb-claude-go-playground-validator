@@ -1466,6 +1466,11 @@ func RegisterDefaultTranslations(v *validator.Validate, trans ut.Translator) (er
 			override:    false,
 		},
 		{
+			tag:         "composite_unique",
+			translation: "{0} must be unique within the collection",
+			override:    false,
+		},
+		{
 			tag:         "iscolor",
 			translation: "{0} must be a valid color",
 			override:    false,
