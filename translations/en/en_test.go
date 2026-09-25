@@ -890,3 +890,41 @@ func TestTranslations(t *testing.T) {
 		Equal(t, tt.expected, fe.Translate(trans))
 	}
 }
+
+
+func TestUniqueFieldsTranslation(t *testing.T) {
+	eng := english.New()
+	uni := ut.New(eng, eng)
+	trans, _ := uni.GetTranslator("en")
+
+	validate := validator.New()
+
+	err := RegisterDefaultTranslations(validate, trans)
+	Equal(t, err, nil)
+
+	type Row struct {
+		Tenant string
+		Name   string
+	}
+
+	type Input struct {
+		Rows []Row
+	}
+
+	err = validate.RegisterStructLevelUnique("Rows", []string{"Tenant", "Name"}, validator.UniqueNilSkip, Input{})
+	Equal(t, err, nil)
+
+	err = validate.Struct(Input{Rows: []Row{
+		{Tenant: "a", Name: "b"},
+		{Tenant: "a", Name: "b"},
+	}})
+	NotEqual(t, err, nil)
+
+	errs, ok := err.(validator.ValidationErrors)
+	Equal(t, ok, true)
+	Equal(t, len(errs), 2)
+
+	translations := errs.Translate(trans)
+	Equal(t, translations["Input.Rows[0]"], "Rows[0] must be unique for the combination of Tenant,Name")
+	Equal(t, translations["Input.Rows[1]"], "Rows[1] must be unique for the combination of Tenant,Name")
+}

@@ -90,6 +90,7 @@ type Validate struct {
 	validations            map[string]internalValidationFuncWrapper
 	transTagFunc           map[ut.Translator]map[string]TranslationFunc // map[<locale>]map[<tag>]TranslationFunc
 	rules                  map[reflect.Type]map[string]string
+	uniqueRules            map[reflect.Type][]*uniqueRule
 	tagCache               *tagCache
 	structCache            *structCache
 	hasCustomFuncs         bool

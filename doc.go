@@ -52,6 +52,29 @@ Custom Validation functions can be added. Example:
 	// NOTES: using the same tag name as an existing function
 	//        will overwrite the existing one
 
+# Struct Level Composite Uniqueness
+
+Composite uniqueness rules can be registered against struct types to ensure
+that no two elements of a collection share the same combination of field
+values. Field paths may traverse pointers and nested structs; nil values are
+either skipped or treated as a regular value depending on the chosen
+UniqueNilPolicy. Errors are reported under the 'uniquefields' tag for both
+the first occurrence and every duplicate, recording only the field paths and
+element indexes, never the composite key contents. Example:
+
+	type Row struct {
+		Tenant string
+		Name   string
+	}
+
+	type Input struct {
+		Rows []Row `validate:"dive"`
+	}
+
+	err := validate.RegisterStructLevelUnique("Rows", []string{"Tenant", "Name"}, validator.UniqueNilSkip, Input{})
+	// NOTES: registration fails when a collection or field path is missing
+	//        or resolves to an unsupported type (eg. floats)
+
 # Valuer Interface
 
 Custom types can implement the Valuer interface to return the value that should
