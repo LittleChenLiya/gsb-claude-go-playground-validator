@@ -69,6 +69,39 @@ Please see https://pkg.go.dev/github.com/go-playground/validator/v10 for detaile
 - [Gin upgrade and/or override validator](https://github.com/go-playground/validator/tree/v9/_examples/gin-upgrading-overriding)
 - [wash - an example application putting it all together](https://github.com/bluesuncorp/wash)
 
+Per-validation field display names
+------
+
+`RegisterTagNameFunc` sets one naming rule for the lifetime of the validator. When
+the same type must be displayed differently per request (for example once with
+`json` tag names and once with localized labels), use `StructNamed` /
+`StructNamedCtx` instead:
+
+```go
+err := validate.StructNamed(myStruct, func(info validator.FieldInfo) string {
+    return info.Field.Tag.Get("json") // empty string keeps the default name
+})
+```
+
+The callback is scoped to that single call: it never changes the global
+configuration and never mutates the per-type caches, so different naming rules
+can run concurrently on the same `*Validate` instance.
+
+Every returned `FieldError` keeps both paths:
+
+- `StructNamespace()` / `StructField()` - the original Go field path, usable as a
+  stable identifier for the same failing field across calls.
+- `Namespace()` / `Field()` / `DisplayNamespace()` - the display path built from
+  this call's names. Slice indexes and map keys (including their brackets) are
+  preserved.
+- `PathSegments()` - the same path split into unambiguous `FieldPathSegment`
+  values (`struct`/`index`/`key`), required when a display name itself contains
+  `.` or `[` `]` and the joined display path cannot be split safely.
+
+Anonymous embedded and nested struct fields are composed from every struct
+field actually walked. See [_examples/struct-named](_examples/struct-named/main.go)
+for a complete example.
+
 Baked-in Validations
 ------
 

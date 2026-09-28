@@ -102,6 +102,18 @@ type FieldError interface {
 	// using validate.Field(...) as there is no way to extract it's name
 	Namespace() string
 
+	// DisplayNamespace returns the namespace built from the names decided by
+	// the FieldNameFunc for the validation call.
+	//
+	// It is identical to Namespace for calls made through StructNamed and
+	// StructNamedCtx; callers that support both named and regular validation
+	// should prefer Namespace, which already returns the display path when a
+	// global RegisterTagNameFunc is registered.
+	//
+	// Because a display name may itself contain '.' and/or '[' and ']', use
+	// PathSegments rather than splitting this string to process the path.
+	DisplayNamespace() string
+
 	// StructNamespace returns the namespace for the field error, with the field's
 	// actual name.
 	//
@@ -125,6 +137,16 @@ type FieldError interface {
 	// eg.  "FirstName"
 	// see Field for comparison
 	StructField() string
+
+	// PathSegments returns the field path split into unambiguous segments from
+	// the root struct down to the failing field, including slice/array indexes
+	// and map keys. Each segment keeps both the original Go name and the
+	// display name chosen for the validation call.
+	//
+	// It returns nil for errors produced by regular validation entries without
+	// a FieldNameFunc (Struct, Var, ...); StructNamespace remains available for
+	// every entry.
+	PathSegments() []FieldPathSegment
 
 	// Value returns the actual field's value in case needed for creating the error
 	// message
@@ -170,6 +192,7 @@ type fieldError struct {
 	structNs       string
 	fieldLen       uint8
 	structfieldLen uint8
+	segs           []FieldPathSegment
 	value          interface{}
 	param          string
 	kind           reflect.Kind
@@ -197,6 +220,16 @@ func (fe *fieldError) Namespace() string {
 // actual name.
 func (fe *fieldError) StructNamespace() string {
 	return fe.structNs
+}
+
+// DisplayNamespace returns the namespace built from the per-call display names.
+func (fe *fieldError) DisplayNamespace() string {
+	return fe.ns
+}
+
+// PathSegments returns the field path split into unambiguous segments.
+func (fe *fieldError) PathSegments() []FieldPathSegment {
+	return fe.segs
 }
 
 // Field returns the field's name with the tag name taking precedence over the

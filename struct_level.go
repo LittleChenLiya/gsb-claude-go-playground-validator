@@ -113,12 +113,41 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 		structFieldName = fieldName
 	}
 
+	// When this validation call provided a FieldNameFunc, resolve the display
+	// name for top level fields of the current struct. Fields that cannot be
+	// resolved (e.g. synthetic names such as "Names[0]") keep the explicit
+	// fieldName argument.
+	if v.nameFn != nil {
+		current := v.slCurrent
+		if current.IsValid() && current.Kind() == reflect.Struct {
+			if sf, ok := current.Type().FieldByName(structFieldName); ok {
+				if name := v.nameFn(FieldInfo{
+					Struct: current.Type(),
+					Field:  sf,
+					Index:  sf.Index[0],
+					Path:   string(append(append([]byte{}, v.actualNs...), structFieldName...)),
+				}); name != "" {
+					fieldName = name
+				}
+			}
+		}
+	}
+
 	v.str1 = string(append(v.ns, fieldName...))
 
-	if v.v.hasTagNameFunc || fieldName != structFieldName {
+	if v.v.hasTagNameFunc || v.nameFn != nil || fieldName != structFieldName {
 		v.str2 = string(append(v.actualNs, structFieldName...))
 	} else {
 		v.str2 = v.str1
+	}
+
+	var segs []FieldPathSegment
+	if v.nameFn != nil {
+		segs = append(v.segs[:len(v.segs):len(v.segs)], FieldPathSegment{
+			Kind:        FieldPathSegmentStruct,
+			Name:        structFieldName,
+			DisplayName: fieldName,
+		})
 	}
 
 	if kind == reflect.Invalid {
@@ -131,6 +160,7 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 				structNs:       v.str2,
 				fieldLen:       uint8(len(fieldName)),
 				structfieldLen: uint8(len(structFieldName)),
+				segs:           segs,
 				param:          param,
 				kind:           kind,
 			},
@@ -147,6 +177,7 @@ func (v *validate) ReportError(field interface{}, fieldName, structFieldName, ta
 			structNs:       v.str2,
 			fieldLen:       uint8(len(fieldName)),
 			structfieldLen: uint8(len(structFieldName)),
+			segs:           segs,
 			value:          getValue(fv),
 			param:          param,
 			kind:           kind,
@@ -165,6 +196,14 @@ func (v *validate) ReportValidationErrors(relativeNamespace, relativeStructNames
 		err = errs[i].(*fieldError)
 		err.ns = string(append(append(v.ns, relativeNamespace...), err.ns...))
 		err.structNs = string(append(append(v.actualNs, relativeStructNamespace...), err.structNs...))
+
+		if v.nameFn != nil && len(err.segs) > 0 {
+			err.segs = append(append(v.segs[:len(v.segs):len(v.segs)], FieldPathSegment{
+				Kind:        FieldPathSegmentStruct,
+				Name:        relativeStructNamespace,
+				DisplayName: relativeNamespace,
+			}), err.segs...)
+		}
 
 		v.errs = append(v.errs, err)
 	}

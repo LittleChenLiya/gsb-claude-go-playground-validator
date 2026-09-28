@@ -354,7 +354,6 @@ func (v *Validate) Struct(s interface{}) error {
 // You will need to assert the error if it's not nil eg. err.(validator.ValidationErrors) to access the array of errors.
 func (v *Validate) StructCtx(ctx context.Context, s interface{}) (err error) {
 	val := reflect.ValueOf(s)
-	top := val
 
 	if val.Kind() == reflect.Ptr && !val.IsNil() {
 		val = val.Elem()
@@ -364,22 +363,72 @@ func (v *Validate) StructCtx(ctx context.Context, s interface{}) (err error) {
 		return &InvalidValidationError{Type: reflect.TypeOf(s)}
 	}
 
+	return v.structNamedCtx(ctx, s, nil)
+}
+
+// StructNamedCtx is the context.Context aware version of StructNamed.
+//
+// nameFn is used only for this call and may be nil, in which case this behaves
+// exactly like StructCtx.
+func (v *Validate) StructNamedCtx(ctx context.Context, s interface{}, nameFn FieldNameFunc) (err error) {
+	val := reflect.ValueOf(s)
+
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct || val.Type().ConvertibleTo(timeType) {
+		return &InvalidValidationError{Type: reflect.TypeOf(s)}
+	}
+
+	return v.structNamedCtx(ctx, s, nameFn)
+}
+
+// structNamedCtx contains the pooled validation logic shared by StructCtx and
+// StructNamedCtx. nameFn is nil for regular validation calls.
+func (v *Validate) structNamedCtx(ctx context.Context, s interface{}, nameFn FieldNameFunc) (err error) {
+	top := reflect.ValueOf(s)
+	val := top
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		val = val.Elem()
+	}
+
 	// good to validate
 	vd := v.pool.Get().(*validate)
 	vd.top = top
 	vd.isPartial = false
+	vd.nameFn = nameFn
+	vd.segs = nil
 	// vd.hasExcludes = false // only need to reset in StructPartial and StructExcept
 
-	vd.validateStruct(ctx, top, val, val.Type(), vd.ns[0:0], vd.actualNs[0:0], nil)
+	vd.validateStruct(ctx, top, val, val.Type(), vd.ns[0:0], vd.actualNs[0:0], nil, nil)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
 		vd.errs = nil
 	}
 
+	vd.nameFn = nil
+	vd.segs = nil
 	v.pool.Put(vd)
 
 	return
+}
+
+// StructNamed validates a struct exactly like Struct, but uses nameFn to
+// decide the display name of every struct field for this single call.
+//
+// The function is scoped to this call: it does not register a global tag name
+// function and never mutates the per-type struct caches, so the same type can
+// be validated concurrently with different naming rules. Returning an empty
+// string keeps the default alternate name for the field.
+//
+// Each returned FieldError still exposes the original Go field path via
+// StructNamespace and the display path via Namespace; PathSegments provides
+// the same information split into unambiguous segments, which is required
+// when a display name itself contains '.' or '[' and ']'.
+func (v *Validate) StructNamed(s interface{}, nameFn FieldNameFunc) error {
+	return v.StructNamedCtx(context.Background(), s, nameFn)
 }
 
 // StructFiltered validates a structs exposed fields, that pass the FilterFunc check and automatically validates
@@ -416,7 +465,7 @@ func (v *Validate) StructFilteredCtx(ctx context.Context, s interface{}, fn Filt
 	vd.ffn = fn
 	// vd.hasExcludes = false // only need to reset in StructPartial and StructExcept
 
-	vd.validateStruct(ctx, top, val, val.Type(), vd.ns[0:0], vd.actualNs[0:0], nil)
+	vd.validateStruct(ctx, top, val, val.Type(), vd.ns[0:0], vd.actualNs[0:0], nil, nil)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
@@ -502,7 +551,7 @@ func (v *Validate) StructPartialCtx(ctx context.Context, s interface{}, fields .
 		}
 	}
 
-	vd.validateStruct(ctx, top, val, typ, vd.ns[0:0], vd.actualNs[0:0], nil)
+	vd.validateStruct(ctx, top, val, typ, vd.ns[0:0], vd.actualNs[0:0], nil, nil)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
@@ -566,7 +615,7 @@ func (v *Validate) StructExceptCtx(ctx context.Context, s interface{}, fields ..
 		vd.includeExclude[string(vd.misc)] = struct{}{}
 	}
 
-	vd.validateStruct(ctx, top, val, typ, vd.ns[0:0], vd.actualNs[0:0], nil)
+	vd.validateStruct(ctx, top, val, typ, vd.ns[0:0], vd.actualNs[0:0], nil, nil)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
@@ -620,7 +669,7 @@ func (v *Validate) VarCtx(ctx context.Context, field interface{}, tag string) (e
 	vd := v.pool.Get().(*validate)
 	vd.top = val
 	vd.isPartial = false
-	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], defaultCField, ctag)
+	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], nil, defaultCField, ctag)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
@@ -672,7 +721,7 @@ func (v *Validate) VarWithValueCtx(ctx context.Context, field interface{}, other
 	vd := v.pool.Get().(*validate)
 	vd.top = otherVal
 	vd.isPartial = false
-	vd.traverseField(ctx, otherVal, reflect.ValueOf(field), vd.ns[0:0], vd.actualNs[0:0], defaultCField, ctag)
+	vd.traverseField(ctx, otherVal, reflect.ValueOf(field), vd.ns[0:0], vd.actualNs[0:0], nil, defaultCField, ctag)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
@@ -730,7 +779,7 @@ func (v *Validate) VarWithKeyCtx(ctx context.Context, key string, field interfac
 	vd := v.pool.Get().(*validate)
 	vd.top = val
 	vd.isPartial = false
-	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], cField, ctag)
+	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], nil, cField, ctag)
 
 	if len(vd.errs) > 0 {
 		err = vd.errs
