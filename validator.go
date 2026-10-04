@@ -76,13 +76,19 @@ func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, cur
 	// check if any struct level validations, after all field validations already checked.
 	// first iteration will have no info about nostructlevel tag, and is checked prior to
 	// calling the next iteration of validateStruct called from traverseField.
-	if cs.fn != nil {
+	if len(cs.fns) > 0 || len(v.v.structDepsFns[typ]) > 0 {
 		v.slflParent = parent
 		v.slCurrent = current
 		v.ns = ns
 		v.actualNs = structNs
 
-		cs.fn(ctx, v)
+		for _, fn := range cs.fns {
+			fn(ctx, v)
+		}
+
+		for _, fn := range v.v.structDepsFns[typ] {
+			fn(ctx, v)
+		}
 	}
 }
 

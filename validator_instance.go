@@ -85,6 +85,8 @@ type Validate struct {
 	pool                   *sync.Pool
 	tagNameFunc            TagNameFunc
 	structLevelFuncs       map[reflect.Type]StructLevelFuncCtx
+	structDeps             map[reflect.Type]map[string][]string
+	structDepsFns          map[reflect.Type][]StructLevelFuncCtx
 	customFuncs            map[reflect.Type]CustomTypeFunc
 	aliases                map[string]string
 	validations            map[string]internalValidationFuncWrapper
@@ -301,6 +303,90 @@ func (v *Validate) RegisterStructValidationMapRules(rules map[string]string, typ
 		}
 		v.rules[typ] = deepCopyRules
 	}
+}
+
+// RegisterStructValidationWithDeps registers a struct-level validation function
+// together with a declaration of the fields it reads, and statically builds a
+// dependency graph for the struct type.
+//
+// The graph is resolved and checked at registration time without executing fn:
+// field paths are resolved against the struct's parsed fields (honouring
+// TagNameFunc aliases and nested paths), unknown fields are reported before
+// any cycle check, and dependency cycles are rejected with the concrete field
+// chain.
+//
+// The returned plan lists all declared fields in stable dependency order
+// (topological groups). The old RegisterStructValidation method is unchanged:
+// it does not require dependencies and its default validation behaviour is
+// preserved.
+//
+// NOTE: this method is not thread-safe; it is intended that all validators be
+// registered prior to any validation.
+func (v *Validate) RegisterStructValidationWithDeps(fn StructLevelFunc, deps StructFieldDeps, types ...interface{}) (*StructValidationPlan, error) {
+	if v.structDeps == nil {
+		v.structDeps = make(map[reflect.Type]map[string][]string)
+	}
+	if v.structDepsFns == nil {
+		v.structDepsFns = make(map[reflect.Type][]StructLevelFuncCtx)
+	}
+
+	wrapped := wrapStructLevelFunc(fn)
+
+	var plan *StructValidationPlan
+	for _, t := range types {
+		typ := reflect.TypeOf(t)
+		if typ.Kind() == reflect.Ptr {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct {
+			continue
+		}
+
+		// Resolve and validate the new declaration before mutating any state,
+		// so an unknown field is reported before any cycle check.
+		edges, err := v.resolveDeps(typ, deps)
+		if err != nil {
+			return nil, err
+		}
+
+		if v.structDeps[typ] == nil {
+			v.structDeps[typ] = make(map[string][]string)
+		}
+		for node, ds := range edges {
+			addEdges(v.structDeps[typ], node, ds)
+		}
+		v.structDepsFns[typ] = append(v.structDepsFns[typ], wrapped)
+
+		p, err := buildStructValidationPlan(typ, v.structDeps[typ])
+		if err != nil {
+			return nil, err
+		}
+		plan = p
+	}
+
+	return plan, nil
+}
+
+// StructValidationPlan returns the dependency-ordered plan for the given type,
+// or an error if the type has no registered dependencies.
+//
+// NOTE: this method is not thread-safe; it is intended that all validators be
+// registered prior to any validation.
+func (v *Validate) StructValidationPlan(typ interface{}) (*StructValidationPlan, error) {
+	t := reflect.TypeOf(typ)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("validator: cannot build a struct validation plan for non-struct type %q", t.String())
+	}
+
+	graph, ok := v.structDeps[t]
+	if !ok {
+		return nil, fmt.Errorf("validator: no struct validation dependencies registered for type %q", t.String())
+	}
+
+	return buildStructValidationPlan(t, graph)
 }
 
 // RegisterCustomTypeFunc registers a CustomTypeFunc against a number of types

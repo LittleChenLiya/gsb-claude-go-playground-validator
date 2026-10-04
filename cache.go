@@ -73,7 +73,7 @@ func (tc *tagCache) Set(key string, value *cTag) {
 type cStruct struct {
 	name   string
 	fields []*cField
-	fn     StructLevelFuncCtx
+	fns    []StructLevelFuncCtx
 }
 
 type cField struct {
@@ -113,7 +113,11 @@ func (v *Validate) extractStructCache(current reflect.Value, sName string) *cStr
 		return cs
 	}
 
-	cs = &cStruct{name: sName, fields: make([]*cField, 0), fn: v.structLevelFuncs[typ]}
+	cs = &cStruct{name: sName, fields: make([]*cField, 0)}
+
+	if fn := v.structLevelFuncs[typ]; fn != nil {
+		cs.fns = append(cs.fns, fn)
+	}
 
 	numFields := current.NumField()
 	rules := v.rules[typ]
