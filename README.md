@@ -78,6 +78,39 @@ Baked-in Validations
 validate := validator.New(validator.WithRequiredStructEnabled())
 ```
 
+### Message Templates
+
+Message templates are an explicit, compiled error-message rendering plan. A template is registered against the triple (tag, language, field type) and compiled at registration time: unknown placeholders and conflicting registrations are reported before any validation runs.
+
+Templates use curly-brace placeholders. Only the registered placeholders are allowed; raw field values are never inserted:
+
+| Placeholder | Renders |
+| - | - |
+| `{field}` | the field's name |
+| `{param}` | the rule's parameter |
+| `{index}` | the innermost dive index |
+| `{indexN}` | the dive index at nesting level N (0-based, outermost first) |
+
+```go
+validate.RegisterMessageTemplate("min", "en", nil, "{field} must be at least {param}")
+validate.RegisterMessageTemplate("min", "zh", nil, "{field} 必须至少为 {param}")
+
+// field-type dedicated template takes priority over the tag default
+validate.RegisterMessageTemplate("min", "en", reflect.TypeOf(0), "int field {field} must be >= {param}")
+```
+
+Rendering follows a fixed priority and reports the fallback source:
+
+1. tag + language + field type (most specific)
+2. tag + language + wildcard type
+3. tag + wildcard language + field type
+4. tag default
+5. global fallback
+
+Every rendered message reports which template produced it and whether a fallback was used. A missing template is a render error, never an empty message and never a validation success: the `FieldError` itself is left untouched and the surrounding validation still fails.
+
+See `MessageRegistry` in the package documentation for the full template specification.
+
 ### Fields:
 
 | Tag | Description |

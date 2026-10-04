@@ -89,6 +89,7 @@ type Validate struct {
 	aliases                map[string]string
 	validations            map[string]internalValidationFuncWrapper
 	transTagFunc           map[ut.Translator]map[string]TranslationFunc // map[<locale>]map[<tag>]TranslationFunc
+	messages               *MessageRegistry
 	rules                  map[reflect.Type]map[string]string
 	tagCache               *tagCache
 	structCache            *structCache
