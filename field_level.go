@@ -61,6 +61,23 @@ type FieldLevel interface {
 	// GetStructFieldOKAdvanced2 is the same as GetStructFieldOK except that it accepts the parent struct to start looking for
 	// the field and namespace allowing more extensibility for validators.
 	GetStructFieldOKAdvanced2(val reflect.Value, namespace string) (reflect.Value, reflect.Kind, bool, bool)
+
+	// Collection returns a read-only identity view of the collection
+	// (slice, array or map) currently being dived into, allowing custom
+	// validation functions to inspect sibling elements of the element
+	// under validation without relying on global state.
+	//
+	// ok is false when not validating within a collection dive or when
+	// collection context tracking is not enabled (see WithCollectionContext).
+	Collection() (view CollectionView, ok bool)
+
+	// CollectionIndex returns the index of the element currently being
+	// validated within the enclosing slice or array being dived into.
+	//
+	// ok is false when not validating within a slice/array dive (map dives
+	// have no positional index) or when collection context tracking is not
+	// enabled (see WithCollectionContext).
+	CollectionIndex() (index int, ok bool)
 }
 
 var _ FieldLevel = new(validate)

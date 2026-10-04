@@ -28,6 +28,7 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	collStack      []collectionScope // stack of enclosing collection dive scopes, per validation run
 }
 
 // parent and current will be the same the first run of validateStruct
@@ -279,15 +280,33 @@ OUTER:
 
 			ct = ct.next
 
+			collCtx := v.v.collectionCtxEnabled
+
 			// traverse slice or map here
 			// or panic ;)
 			switch kind {
 			case reflect.Slice, reflect.Array:
 
+				if collCtx {
+					// enter a new collection scope for this dive; nested
+					// dives push their own scope on top of this one
+					v.pushCollectionScope(current, true)
+					defer v.popCollectionScope()
+				}
+
 				var i64 int64
 				reusableCF := &cField{}
 
 				for i := 0; i < current.Len(); i++ {
+					if collCtx {
+						// stop before validating the next item when the
+						// caller's context has been cancelled
+						if ctx.Err() != nil {
+							return
+						}
+						v.setCollectionIndex(i)
+					}
+
 					i64 = int64(i)
 
 					v.misc = append(v.misc[0:0], cf.name...)
@@ -312,10 +331,23 @@ OUTER:
 
 			case reflect.Map:
 
+				if collCtx {
+					// maps have no positional index, only the collection
+					// view is exposed for this dive's scope
+					v.pushCollectionScope(current, false)
+					defer v.popCollectionScope()
+				}
+
 				var pv string
 				reusableCF := &cField{}
 
 				for _, key := range current.MapKeys() {
+					if collCtx && ctx.Err() != nil {
+						// stop before validating the next item when the
+						// caller's context has been cancelled
+						return
+					}
+
 					pv = fmt.Sprintf("%v", key)
 
 					v.misc = append(v.misc[0:0], cf.name...)

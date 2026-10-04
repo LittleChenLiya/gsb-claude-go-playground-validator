@@ -38,3 +38,22 @@ func WithTagNameFuncBlankOmit() Option {
 		v.omitBlankFieldNames = true
 	}
 }
+
+// WithCollectionContext enables tracking of the enclosing collection while
+// diving into slices, arrays and maps, so custom validation functions can
+// access sibling elements and the current index via FieldLevel.Collection
+// and FieldLevel.CollectionIndex instead of relying on global state.
+//
+// Each nested 'dive' gets its own collection scope and the tracking state
+// is kept per validation run, so concurrent StructCtx (and friends) calls
+// never share collection context. When enabled, cancellation of the
+// context.Context passed to the *Ctx entry points also stops iteration
+// over the remaining collection elements.
+//
+// This is opt-in behaviour in order to keep the default behaviour and
+// performance unchanged.
+func WithCollectionContext() Option {
+	return func(v *Validate) {
+		v.collectionCtxEnabled = true
+	}
+}

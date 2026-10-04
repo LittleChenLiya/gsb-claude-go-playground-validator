@@ -97,6 +97,7 @@ type Validate struct {
 	requiredStructEnabled  bool
 	privateFieldValidation bool
 	omitBlankFieldNames    bool
+	collectionCtxEnabled   bool
 }
 
 // New returns a new instance of 'validate' with sane defaults.
