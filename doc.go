@@ -86,6 +86,35 @@ The library also supports types like sql/driver.Valuer using
 RegisterCustomTypeFunc. See _examples/valuer/main.go and
 _examples/custom/main.go for both approaches.
 
+# Struct-Level Validation Dependencies
+
+Structs using custom cross-field struct-level validations may explicitly
+declare which other fields each rule reads. The validator builds a static
+dependency graph from these declarations at registration time — using only
+its parsed field information (including TagNameFunc alternate names and
+dot-separated nested struct paths) — and never executes any user validation
+function while doing so.
+
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		return strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+	})
+
+	err := validate.RegisterStructValidationWithDeps(orderStructLevelValidation,
+		[]validator.FieldDependency{
+			{Field: "subtotal", Reads: []string{"items"}},
+			{Field: "total", Reads: []string{"subtotal"}},
+		},
+		Order{},
+	)
+
+Registration fails with an *UnknownDependencyFieldError when a declaration
+references a field that does not exist (checked first), or with a
+*DependencyCycleError carrying the concrete field chain when the declared
+dependencies form a cycle. For valid declarations a stable, dependency
+ordered grouping is available via StructValidationPlan. Types registered
+through the older RegisterStructValidation/RegisterStructValidationCtx APIs
+need no declarations and their validation behaviour is unchanged.
+
 # Cross-Field Validation
 
 Cross-Field Validation can be done via the following tags:

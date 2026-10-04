@@ -85,6 +85,7 @@ type Validate struct {
 	pool                   *sync.Pool
 	tagNameFunc            TagNameFunc
 	structLevelFuncs       map[reflect.Type]StructLevelFuncCtx
+	structValidationPlans  map[reflect.Type]*ValidationPlan
 	customFuncs            map[reflect.Type]CustomTypeFunc
 	aliases                map[string]string
 	validations            map[string]internalValidationFuncWrapper
