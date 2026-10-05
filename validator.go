@@ -28,6 +28,7 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	collections    []*collectionLevel // per-dive collection scopes; empty when not diving
 }
 
 // parent and current will be the same the first run of validateStruct
@@ -287,8 +288,22 @@ OUTER:
 				var i64 int64
 				reusableCF := &cField{}
 
+				cl := &collectionLevel{collection: current}
+				if n := len(v.collections); n > 0 {
+					cl.parent = v.collections[n-1]
+				}
+				v.collections = append(v.collections, cl)
+
 				for i := 0; i < current.Len(); i++ {
+					// Stop processing further elements once the context is
+					// canceled; the cancellation is propagated through the
+					// same context.Context passed to StructCtx/VarCtx.
+					if err := ctx.Err(); err != nil {
+						break
+					}
+
 					i64 = int64(i)
+					cl.index = i
 
 					v.misc = append(v.misc[0:0], cf.name...)
 					v.misc = append(v.misc, '[')
@@ -310,12 +325,26 @@ OUTER:
 					v.traverseField(ctx, parent, current.Index(i), ns, structNs, reusableCF, ct)
 				}
 
+				v.collections[len(v.collections)-1] = nil
+				v.collections = v.collections[:len(v.collections)-1]
+
 			case reflect.Map:
 
 				var pv string
 				reusableCF := &cField{}
 
+				cl := &collectionLevel{collection: current, index: -1}
+				if n := len(v.collections); n > 0 {
+					cl.parent = v.collections[n-1]
+				}
+				v.collections = append(v.collections, cl)
+
 				for _, key := range current.MapKeys() {
+					// See the slice/array case: stop on cancellation.
+					if err := ctx.Err(); err != nil {
+						break
+					}
+
 					pv = fmt.Sprintf("%v", key)
 
 					v.misc = append(v.misc[0:0], cf.name...)
@@ -358,6 +387,9 @@ OUTER:
 						v.traverseField(ctx, parent, current.MapIndex(key), ns, structNs, reusableCF, ct)
 					}
 				}
+
+				v.collections[len(v.collections)-1] = nil
+				v.collections = v.collections[:len(v.collections)-1]
 
 			default:
 				// throw error, if not a slice or map then should not have gotten here

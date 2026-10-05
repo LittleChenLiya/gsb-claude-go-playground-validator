@@ -61,6 +61,15 @@ type FieldLevel interface {
 	// GetStructFieldOKAdvanced2 is the same as GetStructFieldOK except that it accepts the parent struct to start looking for
 	// the field and namespace allowing more extensibility for validators.
 	GetStructFieldOKAdvanced2(val reflect.Value, namespace string) (reflect.Value, reflect.Kind, bool, bool)
+
+	// CollectionLevel returns the read-only collection context for the
+	// current dive, or nil if the field is not being validated within a
+	// slice, array or map dive.
+	//
+	// The returned view is immutable: modifying it panics. Nested dives
+	// each have their own scope; the returned level is always the
+	// innermost dive, and Parent() exposes the enclosing scope.
+	CollectionLevel() CollectionLevel
 }
 
 var _ FieldLevel = new(validate)
@@ -117,4 +126,14 @@ func (v *validate) GetStructFieldOK2() (reflect.Value, reflect.Kind, bool, bool)
 // the field and namespace allowing more extensibility for validators.
 func (v *validate) GetStructFieldOKAdvanced2(val reflect.Value, namespace string) (reflect.Value, reflect.Kind, bool, bool) {
 	return v.getStructFieldOKInternal(val, namespace)
+}
+
+// CollectionLevel returns the read-only collection context for the
+// current dive, or nil if the field is not being validated within a
+// slice, array or map dive.
+func (v *validate) CollectionLevel() CollectionLevel {
+	if n := len(v.collections); n > 0 {
+		return v.collections[n-1]
+	}
+	return nil
 }
