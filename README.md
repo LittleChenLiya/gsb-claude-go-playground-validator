@@ -19,6 +19,7 @@ It has the following **unique** features:
 -   Alias validation tags, which allows for mapping of several validations to a single tag for easier defining of validations on structs
 -   Extraction of custom defined Field Name e.g. can specify to extract the JSON name while validating and have it available in the resulting FieldError
 -   Customizable i18n aware error messages.
+-   Precompiled validation plans via `CompileSchema`/`StructWithPlan`, which parse all tags, expand aliases and resolve cross-field references ahead of time, reporting unknown tags, alias cycles, invalid parameters and missing cross-field paths as one aggregated error.
 -   Default validator for the [gin](https://github.com/gin-gonic/gin) web framework; upgrading from v8 to v9 in gin see [here](https://github.com/go-playground/validator/tree/master/_examples/gin-upgrading-overriding)
 
 A Call for Maintainers

@@ -28,7 +28,19 @@ const (
 	invalidValidation   = "Invalid validation tag on field '%s'"
 	undefinedValidation = "Undefined validation function '%s' on field '%s'"
 	keysTagNotDefined   = "'" + endKeysTag + "' tag encountered without a corresponding '" + keysTag + "' tag"
+	aliasCycle          = "Alias cycle detected: %s"
 )
+
+// checkAliasCycle panics with a descriptive message when alias already
+// appears in the current expansion chain, i.e. the alias definitions are
+// cyclic and could never be fully expanded.
+func checkAliasCycle(chain []string, alias string) {
+	for _, a := range chain {
+		if a == alias {
+			panic(fmt.Sprintf(aliasCycle, strings.Join(chain, " -> ")+" -> "+alias))
+		}
+	}
+}
 
 type structCache struct {
 	lock sync.Mutex
@@ -173,6 +185,15 @@ func (v *Validate) extractStructCache(current reflect.Value, sName string) *cStr
 }
 
 func (v *Validate) parseFieldTagsRecursive(tag string, fieldName string, alias string, hasAlias bool) (firstCtag *cTag, current *cTag) {
+	return v.parseFieldTagsRecursiveInner(tag, fieldName, alias, hasAlias, nil)
+}
+
+// parseFieldTagsRecursiveInner is parseFieldTagsRecursive with alias cycle
+// detection: chain holds the aliases currently being expanded so a cyclic
+// alias definition panics with a descriptive message instead of recursing
+// forever. chain is nil for tags without aliases, keeping the common path
+// allocation free.
+func (v *Validate) parseFieldTagsRecursiveInner(tag string, fieldName string, alias string, hasAlias bool, chain []string) (firstCtag *cTag, current *cTag) {
 	var t string
 	noAlias := len(alias) == 0
 	tags := strings.Split(tag, tagSeparator)
@@ -185,10 +206,11 @@ func (v *Validate) parseFieldTagsRecursive(tag string, fieldName string, alias s
 
 		// check map for alias and process new tags, otherwise process as usual
 		if tagsVal, found := v.aliases[t]; found {
+			checkAliasCycle(chain, t)
 			if i == 0 {
-				firstCtag, current = v.parseFieldTagsRecursive(tagsVal, fieldName, t, true)
+				firstCtag, current = v.parseFieldTagsRecursiveInner(tagsVal, fieldName, t, true, append(chain, t))
 			} else {
-				next, curr := v.parseFieldTagsRecursive(tagsVal, fieldName, t, true)
+				next, curr := v.parseFieldTagsRecursiveInner(tagsVal, fieldName, t, true, append(chain, t))
 				current.next, current = next, curr
 			}
 			continue
@@ -231,7 +253,7 @@ func (v *Validate) parseFieldTagsRecursive(tag string, fieldName string, alias s
 				}
 			}
 
-			current.keys, _ = v.parseFieldTagsRecursive(string(b[:len(b)-1]), fieldName, "", false)
+			current.keys, _ = v.parseFieldTagsRecursiveInner(string(b[:len(b)-1]), fieldName, "", false, chain)
 
 		case endKeysTag:
 			current.typeof = typeEndKeys
@@ -290,7 +312,8 @@ func (v *Validate) parseFieldTagsRecursive(tag string, fieldName string, alias s
 					current.fn = wrapper.fn
 					current.runValidationWhenNil = wrapper.runValidationOnNil
 				} else if aliasTag, isAlias := v.aliases[current.tag]; isAlias {
-					aliasFirst, aliasLast := v.parseFieldTagsRecursive(aliasTag, fieldName, current.tag, true)
+					checkAliasCycle(chain, current.tag)
+					aliasFirst, aliasLast := v.parseFieldTagsRecursiveInner(aliasTag, fieldName, current.tag, true, append(chain, current.tag))
 
 					current.tag = aliasFirst.tag
 					current.fn = aliasFirst.fn

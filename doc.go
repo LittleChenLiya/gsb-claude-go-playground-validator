@@ -1634,6 +1634,47 @@ Here is a list of the current non standard validators:
 
 		Usage: notblank
 
+# Precompiled Validation Plans
+
+CompileSchema pre-compiles the validation schema of a struct type ahead of
+time: every tag of every reachable struct type is parsed, aliases are
+expanded and cross-field references (e.g. eqfield) are resolved, without
+invoking any validation function or reading any business value. Recursive
+types terminate by type identity.
+
+Compilation fails with a PlanErrors error aggregating every problem
+found at once - unknown tags, alias cycles, invalid parameters and
+cross-field references that do not exist - each carrying the dotted field
+path of the offending field:
+
+	type Broken struct {
+		A int    `validate:"gt=abc"`
+		B string `validate:"eqfield=Missing"`
+	}
+
+	_, err := validate.CompileSchema(reflect.TypeOf(Broken{}))
+	// err is a validator.PlanErrors with 2 entries:
+	//   Broken.A: tag 'gt' param 'abc': invalid parameter ...
+	//   Broken.B: tag 'eqfield' param 'Missing': cross-field reference ...
+
+A successfully compiled Plan is immutable and can be executed any number of
+times with StructWithPlan, producing exactly the same ValidationErrors as
+Struct:
+
+	plan, err := validate.CompileSchema(reflect.TypeOf(MyStruct{}))
+	if err != nil {
+		// handle validator.PlanErrors
+	}
+	err = validate.StructWithPlan(myStruct, plan)
+
+Plans are bound to the registry version of the *Validate instance they were
+compiled from: calling RegisterValidation, RegisterAlias,
+RegisterStructValidation, RegisterStructValidationMapRules,
+RegisterCustomTypeFunc, SetTagName or RegisterTagNameFunc after compiling
+invalidates existing plans, and StructWithPlan then reports a
+*StalePlanError. Recompile with CompileSchema to pick up the new registry.
+The regular Struct validation path is unaffected by plans.
+
 # Panics
 
 This package panics when bad input is provided, this is by design, bad code like

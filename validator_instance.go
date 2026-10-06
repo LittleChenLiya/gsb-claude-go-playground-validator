@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ut "github.com/go-playground/universal-translator"
@@ -97,6 +98,13 @@ type Validate struct {
 	requiredStructEnabled  bool
 	privateFieldValidation bool
 	omitBlankFieldNames    bool
+
+	// registryVersion is incremented every time the validation registry
+	// (validations, aliases, struct level validations, custom type funcs,
+	// tag name settings) changes. Plans compiled by CompileSchema are tied
+	// to the version observed at compile time and become stale once it moves.
+	// It must only be accessed through the sync/atomic functions.
+	registryVersion uint64
 }
 
 // New returns a new instance of 'validate' with sane defaults.
@@ -158,6 +166,7 @@ func New(options ...Option) *Validate {
 // SetTagName allows for changing of the default tag name of 'validate'
 func (v *Validate) SetTagName(name string) {
 	v.tagName = name
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // ValidateMapCtx validates a map using a map of validation rules and allows passing of contextual
@@ -211,6 +220,7 @@ func (v *Validate) ValidateMap(data map[string]interface{}, rules map[string]int
 func (v *Validate) RegisterTagNameFunc(fn TagNameFunc) {
 	v.tagNameFunc = fn
 	v.hasTagNameFunc = true
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // RegisterValidation adds a validation with the given tag
@@ -245,6 +255,7 @@ func (v *Validate) RegisterAlias(alias, tags string) {
 	}
 
 	v.aliases[alias] = tags
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // RegisterStructValidation registers a StructLevelFunc against a number of types.
@@ -273,6 +284,7 @@ func (v *Validate) RegisterStructValidationCtx(fn StructLevelFuncCtx, types ...i
 
 		v.structLevelFuncs[reflect.TypeOf(t)] = fn
 	}
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // RegisterStructValidationMapRules registers validate map rules.
@@ -301,6 +313,7 @@ func (v *Validate) RegisterStructValidationMapRules(rules map[string]string, typ
 		}
 		v.rules[typ] = deepCopyRules
 	}
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // RegisterCustomTypeFunc registers a CustomTypeFunc against a number of types
@@ -316,6 +329,7 @@ func (v *Validate) RegisterCustomTypeFunc(fn CustomTypeFunc, types ...interface{
 	}
 
 	v.hasCustomFuncs = true
+	atomic.AddUint64(&v.registryVersion, 1)
 }
 
 // RegisterTranslation registers translations against the provided tag.
@@ -368,6 +382,7 @@ func (v *Validate) StructCtx(ctx context.Context, s interface{}) (err error) {
 	vd := v.pool.Get().(*validate)
 	vd.top = top
 	vd.isPartial = false
+	vd.plan = nil
 	// vd.hasExcludes = false // only need to reset in StructPartial and StructExcept
 
 	vd.validateStruct(ctx, top, val, val.Type(), vd.ns[0:0], vd.actualNs[0:0], nil)
@@ -413,6 +428,7 @@ func (v *Validate) StructFilteredCtx(ctx context.Context, s interface{}, fn Filt
 	vd := v.pool.Get().(*validate)
 	vd.top = top
 	vd.isPartial = true
+	vd.plan = nil
 	vd.ffn = fn
 	// vd.hasExcludes = false // only need to reset in StructPartial and StructExcept
 
@@ -461,6 +477,7 @@ func (v *Validate) StructPartialCtx(ctx context.Context, s interface{}, fields .
 	vd := v.pool.Get().(*validate)
 	vd.top = top
 	vd.isPartial = true
+	vd.plan = nil
 	vd.ffn = nil
 	vd.hasExcludes = false
 	vd.includeExclude = make(map[string]struct{})
@@ -547,6 +564,7 @@ func (v *Validate) StructExceptCtx(ctx context.Context, s interface{}, fields ..
 	vd := v.pool.Get().(*validate)
 	vd.top = top
 	vd.isPartial = true
+	vd.plan = nil
 	vd.ffn = nil
 	vd.hasExcludes = true
 	vd.includeExclude = make(map[string]struct{})
@@ -620,6 +638,7 @@ func (v *Validate) VarCtx(ctx context.Context, field interface{}, tag string) (e
 	vd := v.pool.Get().(*validate)
 	vd.top = val
 	vd.isPartial = false
+	vd.plan = nil
 	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], defaultCField, ctag)
 
 	if len(vd.errs) > 0 {
@@ -672,6 +691,7 @@ func (v *Validate) VarWithValueCtx(ctx context.Context, field interface{}, other
 	vd := v.pool.Get().(*validate)
 	vd.top = otherVal
 	vd.isPartial = false
+	vd.plan = nil
 	vd.traverseField(ctx, otherVal, reflect.ValueOf(field), vd.ns[0:0], vd.actualNs[0:0], defaultCField, ctag)
 
 	if len(vd.errs) > 0 {
@@ -730,6 +750,7 @@ func (v *Validate) VarWithKeyCtx(ctx context.Context, key string, field interfac
 	vd := v.pool.Get().(*validate)
 	vd.top = val
 	vd.isPartial = false
+	vd.plan = nil
 	vd.traverseField(ctx, val, val, vd.ns[0:0], vd.actualNs[0:0], cField, ctag)
 
 	if len(vd.errs) > 0 {
@@ -754,5 +775,6 @@ func (v *Validate) registerValidation(tag string, fn FuncCtx, bakedIn bool, nilC
 		panic(fmt.Sprintf(restrictedTagErr, tag))
 	}
 	v.validations[tag] = internalValidationFuncWrapper{fn: fn, runValidationOnNil: nilCheckable}
+	atomic.AddUint64(&v.registryVersion, 1)
 	return nil
 }

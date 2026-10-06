@@ -28,13 +28,26 @@ type validate struct {
 	fldIsPointer   bool          // StructLevel & FieldLevel
 	isPartial      bool
 	hasExcludes    bool
+	plan           *Plan // set only when validating via StructWithPlan/StructWithPlanCtx
 }
 
 // parent and current will be the same the first run of validateStruct
 func (v *validate) validateStruct(ctx context.Context, parent reflect.Value, current reflect.Value, typ reflect.Type, ns []byte, structNs []byte, ct *cTag) {
-	cs, ok := v.v.structCache.Get(typ)
+	var cs *cStruct
+	var ok bool
+
+	if v.plan != nil {
+		// precompiled plans carry their own immutable struct definitions;
+		// types not known at compile time (e.g. behind interface fields)
+		// fall back to the shared caches below.
+		cs, ok = v.plan.structs[typ]
+	}
+
 	if !ok {
-		cs = v.v.extractStructCache(current, typ.Name())
+		cs, ok = v.v.structCache.Get(typ)
+		if !ok {
+			cs = v.v.extractStructCache(current, typ.Name())
+		}
 	}
 
 	if len(ns) == 0 && len(cs.name) != 0 {
