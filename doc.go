@@ -15,6 +15,39 @@ in essence only parsing your validation tags once per struct type.
 Using multiple instances neglects the benefit of caching.
 The not thread-safe functions are explicitly marked as such in the documentation.
 
+# Pre-compiled Validation Plans
+
+CompileSchema pre-compiles the validation schema for a struct type ahead of
+time: it parses every field tag, expands aliases and resolves cross-field
+references (eqfield, eqcsfield, required_with, ...) for the type and every
+type reachable from it, terminating on recursive types by type identity. It
+never invokes a validation function and never inspects a value.
+
+All problems are reported at once as a SchemaErrors aggregate of *SchemaError
+diagnostics, each carrying the dot-separated field path, the offending tag
+and parameter, and a SchemaErrorKind (unknown tag, alias cycle, invalid
+parameter, dangling cross-field reference, malformed dive usage, ...):
+
+	plan, err := validate.CompileSchema(reflect.TypeOf(MyStruct{}))
+	if err != nil {
+		for _, se := range err.(validator.SchemaErrors) {
+			log.Println(se.Path, se.Tag, se.Kind, se)
+		}
+		return
+	}
+
+On success an immutable *Plan is returned which can be reused with
+StructWithPlan / StructWithPlanCtx, whose validation behaviour and returned
+errors are identical to Struct:
+
+	err = validate.StructWithPlan(myStruct, plan)
+
+A plan is bound to the *Validate instance and registry state it was compiled
+with: registering validations, aliases, struct level validations, map rules,
+custom type funcs, tag name funcs or changing the tag name invalidates
+previously compiled plans, and StructWithPlan then returns an
+*InvalidPlanError. Recompile with CompileSchema after such changes.
+
 # Validation Functions Return Type error
 
 Doing things this way is actually the way the standard library does, see the

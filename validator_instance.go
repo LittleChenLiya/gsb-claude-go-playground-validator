@@ -97,6 +97,11 @@ type Validate struct {
 	requiredStructEnabled  bool
 	privateFieldValidation bool
 	omitBlankFieldNames    bool
+	// registryVersion is incremented every time the validation registry
+	// (validations, aliases, struct level validations, map rules, custom
+	// type funcs, tag name func or tag name) changes; it is used to
+	// invalidate Plans compiled by CompileSchema.
+	registryVersion uint64
 }
 
 // New returns a new instance of 'validate' with sane defaults.
@@ -158,6 +163,7 @@ func New(options ...Option) *Validate {
 // SetTagName allows for changing of the default tag name of 'validate'
 func (v *Validate) SetTagName(name string) {
 	v.tagName = name
+	v.registryVersion++
 }
 
 // ValidateMapCtx validates a map using a map of validation rules and allows passing of contextual
@@ -211,6 +217,7 @@ func (v *Validate) ValidateMap(data map[string]interface{}, rules map[string]int
 func (v *Validate) RegisterTagNameFunc(fn TagNameFunc) {
 	v.tagNameFunc = fn
 	v.hasTagNameFunc = true
+	v.registryVersion++
 }
 
 // RegisterValidation adds a validation with the given tag
@@ -245,6 +252,7 @@ func (v *Validate) RegisterAlias(alias, tags string) {
 	}
 
 	v.aliases[alias] = tags
+	v.registryVersion++
 }
 
 // RegisterStructValidation registers a StructLevelFunc against a number of types.
@@ -273,6 +281,7 @@ func (v *Validate) RegisterStructValidationCtx(fn StructLevelFuncCtx, types ...i
 
 		v.structLevelFuncs[reflect.TypeOf(t)] = fn
 	}
+	v.registryVersion++
 }
 
 // RegisterStructValidationMapRules registers validate map rules.
@@ -301,6 +310,7 @@ func (v *Validate) RegisterStructValidationMapRules(rules map[string]string, typ
 		}
 		v.rules[typ] = deepCopyRules
 	}
+	v.registryVersion++
 }
 
 // RegisterCustomTypeFunc registers a CustomTypeFunc against a number of types
@@ -316,6 +326,7 @@ func (v *Validate) RegisterCustomTypeFunc(fn CustomTypeFunc, types ...interface{
 	}
 
 	v.hasCustomFuncs = true
+	v.registryVersion++
 }
 
 // RegisterTranslation registers translations against the provided tag.
@@ -754,5 +765,6 @@ func (v *Validate) registerValidation(tag string, fn FuncCtx, bakedIn bool, nilC
 		panic(fmt.Sprintf(restrictedTagErr, tag))
 	}
 	v.validations[tag] = internalValidationFuncWrapper{fn: fn, runValidationOnNil: nilCheckable}
+	v.registryVersion++
 	return nil
 }
